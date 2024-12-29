@@ -17,7 +17,7 @@ import numpy as np
 @register('lte')
 class LTE(nn.Module):
 
-    def __init__(self, encoder_spec, imnet_spec=None, hidden_dim=256):
+    def __init__(self, encoder_spec, imnet_spec=None, hidden_dim=256,**kwargs):
         super().__init__()        
         self.encoder = models.make(encoder_spec)
         self.coef = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)

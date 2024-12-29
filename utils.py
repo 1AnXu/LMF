@@ -80,14 +80,18 @@ def set_save_path(save_path, remove=True):
     return log, writer
 
 
-def compute_num_params(model, text=False):
+def compute_num_params(model, text=False, unit='M'):
     tot = int(sum([np.prod(p.shape) for p in model.parameters()]))
     if text:
-        if tot >= 1e6:
-            return '{:.1f}M'.format(tot / 1e6)
-        else:
+        if unit == 'M':
+            return '{:.3f}M'.format(tot / 1e6)
+        elif unit == 'K':
             return '{:.1f}K'.format(tot / 1e3)
     else:
+        if unit == 'M':
+            return tot / 1e6
+        elif unit == 'K':
+            return tot / 1e3
         return tot
 
 
