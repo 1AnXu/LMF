@@ -138,6 +138,7 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None, wi
             index_str = str(index) if index >= 100 else ('0' + str(index) if index >= 10 else '00' + str(index))
             transforms.ToPILImage()(save_img).save(save_path + "/" + save_folder + "_" + index_str + ".png")
             index += 1
+            del save_img
 
         if eval_type is not None:  # reshape for shaving-eval
             # gt reshape
@@ -161,7 +162,10 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None, wi
 
         if verbose:
             pbar.set_description('val {:.4f}'.format(val_res.item()))
-            
+        
+        # 删除不再需要的张量
+        del inp, coord, cell, pred, batch['gt']
+        torch.cuda.empty_cache()
     return val_res.item()
 
 
@@ -171,7 +175,7 @@ if __name__ == '__main__':
     parser.add_argument('--model')
     parser.add_argument('--window', default='0')
     parser.add_argument('--scale_max', default='4')
-    parser.add_argument('--fast', default=True)  # Set fast to True for LMF, False for original LIIF/LTE/CiaoSR
+    parser.add_argument('--fast', default=False)  # Set fast to True for LMF, False for original LIIF/LTE/CiaoSR
     parser.add_argument('--gpu', default='0')
     parser.add_argument('--cmsr', default=False)
     parser.add_argument('--cmsr_mse', default=0.00002)
