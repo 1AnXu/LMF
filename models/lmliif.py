@@ -121,7 +121,7 @@ class LMLIIF(nn.Module):
 
         bs, c, h, w = feat.shape
 
-        initial_mod = feat.permute(0, 2, 3, 1).contiguous().view(bs, -1, c)
+        initial_mod = feat.permute(0, 2, 3, 1).contiguous().view(bs, -1, c) # (B, h * w, C)
         if self.cell_decode:
             # use relative height, width info
             rel_cell = cell.clone()[:, :h * w, :]
@@ -402,9 +402,9 @@ class LMLIIF(nn.Module):
                     coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
 
                     q_coord = F.grid_sample(
-                        self.feat_coord, coord_.flip(-1).unsqueeze(1),
+                        self.feat_coord, coord_.flip(-1).unsqueeze(1), # (b,c,h,w) op (b,1,q,2) -> (b,c,1,q)
                         mode='nearest', align_corners=False)[:, :, 0, :] \
-                        .permute(0, 2, 1)
+                        .permute(0, 2, 1) # (b,q,c)
                     rel_coord = coord - q_coord
                     rel_coord[:, :, 0] *= feat.shape[-2]
                     rel_coord[:, :, 1] *= feat.shape[-1]
@@ -425,9 +425,9 @@ class LMLIIF(nn.Module):
                 # Use latent modulations to boost the render mlp
                 if self.training:
                     q_mod = F.grid_sample(
-                        mod, coord_.flip(-1).unsqueeze(1),
+                        mod, coord_.flip(-1).unsqueeze(1), # mod (B, C', h, w) coord_ (B, 1, q, 2)  -> (B, C', 1, q)
                         mode='nearest', align_corners=False)[:, :, 0, :] \
-                        .permute(0, 2, 1).contiguous().view(bs * q, -1)
+                        .permute(0, 2, 1).contiguous().view(bs * q, -1) # (B, q, C') - > (B*q, C')
                     pred = self.imnet(inp, mod=q_mod).view(bs, q, -1)
                     preds.append(pred)
                 else:

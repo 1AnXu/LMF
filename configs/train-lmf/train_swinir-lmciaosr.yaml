@@ -18,7 +18,7 @@ val_dataset:
   dataset:
     name: image-folder
     args:
-      root_path: ../datasets/DIV2K100/DIV2K100_crop_HR
+      root_path: load/div2k/DIV2K_valid_HR
       first_k: 10
       repeat: 160
       cache: in_memory

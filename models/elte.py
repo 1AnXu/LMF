@@ -14,16 +14,17 @@ from utils import make_coord
 import numpy as np
 
 
-@register('lte')
-class LTE(nn.Module):
+@register('elte')
+class ELTE(nn.Module):
 
-    def __init__(self, encoder_spec, imnet_spec=None, hidden_dim=256):
+    def __init__(self, encoder_spec, imnet_spec=None, hidden_dim=256,**kwargs):
         super().__init__()        
         self.encoder = models.make(encoder_spec)
-        self.coef = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
-        self.freq = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
+        self.coef = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1) # (b,c,h,w)
+        self.freq = nn.Conv2d(self.encoder.out_dim, hidden_dim//2, 3, padding=1) # (b,c/2,h,w)
+        self.coord_fc = nn.Linear(2, hidden_dim//2, bias=False) #(b*q,2) -> (b*q,c/2)
         self.phase = nn.Linear(2, hidden_dim//2, bias=False)        
-
+        
         self.imnet = models.make(imnet_spec, args={'in_dim': hidden_dim})
 
         # For time evaluation
@@ -92,9 +93,11 @@ class LTE(nn.Module):
                 
                 # basis generation
                 bs, q = coord.shape[:2]
-                q_freq = torch.stack(torch.split(q_freq, 2, dim=-1), dim=-1)#(b,q,c/2,2)
-                q_freq = torch.mul(q_freq, rel_coord.unsqueeze(-1))#(b,q,c/2,2) mul (b,q,2,1) -> (b,q,2,c/2)
-                q_freq = torch.sum(q_freq, dim=-2)# (b,q,c/2)
+                # q_freq = torch.stack(torch.split(q_freq, 2, dim=-1), dim=-1)#(b,q,c/2,2)
+                # q_freq = torch.mul(q_freq, rel_coord.unsqueeze(-1))#(b,q,c/2,2) mul (b,q,2,1) -> (b,q,2,c/2)
+                # q_freq = torch.sum(q_freq, dim=-2)# (b,q,c/2)
+                q_freq *= self.coord_fc(rel_coord.view((bs * q, -1))).view(bs, q, -1)
+                
                 q_freq += self.phase(rel_cell.view((bs * q, -1))).view(bs, q, -1)
                 q_freq = torch.cat((torch.cos(np.pi*q_freq), torch.sin(np.pi*q_freq)), dim=-1) # (b,q,c)
 

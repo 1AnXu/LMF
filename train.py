@@ -41,7 +41,8 @@ def make_data_loaders():
 
 
 def prepare_training():
-    if os.path.exists(config.get('resume')):
+    resume_pth = config.get('resume')
+    if resume_pth is not None and os.path.exists(resume_pth):
         sv_file = torch.load(config['resume'])
         model = models.make(sv_file['model'], load_sd=True).cuda()
         optimizer = utils.make_optimizer(
@@ -142,15 +143,16 @@ def main(config_, save_path):
     for epoch in range(epoch_start, epoch_max + 1):
         t_epoch_start = timer.t()
         log_info = ['epoch {}/{}'.format(epoch, epoch_max)]
-
-        writer.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
+        current_lr = optimizer.param_groups[0]['lr']
+        writer.add_scalar('lr', current_lr, epoch)
 
         train_loss = train(train_loader, model, optimizer, epoch)
         if lr_scheduler is not None:
             lr_scheduler.step()
-
+            
+        log_info.append('lr={:.2e}'.format(current_lr))
         log_info.append('train: loss={:.4f}'.format(train_loss))
-#         writer.add_scalars('loss', {'train': train_loss}, epoch)
+        writer.add_scalars('loss', {'train': train_loss}, epoch)
 
         if n_gpus > 1:
             model_ = model.module
@@ -195,7 +197,7 @@ def main(config_, save_path):
         log_info.append('{} {}/{}'.format(t_epoch, t_elapsed, t_all))
 
         log(', '.join(log_info))
-        writer.flush()
+    writer.close()
 
 
 if __name__ == '__main__':

@@ -10,23 +10,23 @@ class LMMLP(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_dim, hidden_depth,
                  mod_scale=True, mod_shift=True, mod_up_merge=False, use_conv=False):
         super().__init__()
-        self.hidden_depth = hidden_depth
-        self.hidden_dim = hidden_dim
+        self.hidden_depth = hidden_depth # 6
+        self.hidden_dim = hidden_dim # 16
 
         # Modulation configs
-        self.mod_scale = mod_scale
-        self.mod_shift = mod_shift
+        self.mod_scale = mod_scale # True
+        self.mod_shift = mod_shift # True
         self.mod_dim = 0
         # If we modulate both scale and shift, we have twice the number of modulations at every layer and feature
         self.mod_dim += hidden_dim if self.mod_scale else 0
-        self.mod_dim += hidden_dim if self.mod_shift else 0
+        self.mod_dim += hidden_dim if self.mod_shift else 0 # 32
 
         # For faster inference, set to True if upsample scale mod and shift mod together.
         self.mod_up_merge = mod_up_merge and self.mod_scale and self.mod_shift
 
         layers = []
         lastv = in_dim
-        for _ in range(hidden_depth):
+        for _ in range(hidden_depth): # Linear0, ReLU0, Linear1, ReLU1, ..., Linear5, ReLU5, Linear6
             if use_conv:
                 layers.append(nn.Conv2d(lastv, hidden_dim, 1))
             else:
@@ -39,8 +39,8 @@ class LMMLP(nn.Module):
             layers.append(nn.Linear(lastv, out_dim))
         self.layers = nn.Sequential(*layers)
 
-    def forward(self, x, mod=None, coord=None, only_layer0=False, skip_layer0=False):
-        shape = x.shape[:-1]
+    def forward(self, x, mod=None, coord=None, only_layer0=False, skip_layer0=False): # x: (bs*q, feat_dim+2+2), mod: (bs*q, latent_mlp_dim) ,feat_dim=64,latent_mlp_dim=208,q=2304
+        shape = x.shape[:-1] # (bs*q,)
         x = x.view(-1, x.shape[-1])
 
         if only_layer0:
@@ -52,17 +52,17 @@ class LMMLP(nn.Module):
         # Split modulations into shifts and scales and apply them to hidden features
         mid_dim = (
             self.mod_dim * self.hidden_depth // 2 if (self.mod_scale and self.mod_shift) else 0
-        )
+        ) # 32*6//2=96
 
-        for idx, module in enumerate(self.layers):
+        for idx, module in enumerate(self.layers): # 0,1,2,3,4,5,...,12
             if not (skip_layer0 and idx == 0):
                 x = module(x)
 
-            if idx == self.hidden_depth * 2 or idx % 2 == 1:
+            if idx == self.hidden_depth * 2 or idx % 2 == 1: # 1,3,5,7,9,11 ReLU, 12 Linear
                 # skip output linear layer or hidden activation layer
                 continue
 
-            start, end = (idx // 2) * self.hidden_dim, ((idx // 2) + 1) * self.hidden_dim
+            start, end = (idx // 2) * self.hidden_dim, ((idx // 2) + 1) * self.hidden_dim #idx = 0,2,4,6,8,10 ->(0,16),(16,32),(32,48),(48,64),(64,80),(80,96)
 
             # Use modulations on hidden linear layer outputs
             if self.mod_up_merge and coord is not None:

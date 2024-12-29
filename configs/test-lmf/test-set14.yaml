@@ -2,7 +2,7 @@ test_dataset:
   dataset:
     name: image-folder
     args:
-      root_path: ./load/testsets/Set14_HR
+      root_path: load/benchmark/Set14/HR
       cache: none
   wrapper:
     name: sr-implicit-downsampled

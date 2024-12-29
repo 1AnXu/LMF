@@ -2,7 +2,7 @@ test_dataset:
   dataset:
     name: image-folder
     args:
-      root_path: ./load/testsets/Urban100_HR
+      root_path: load/benchmark/Urban100/HR
       cache: none
   wrapper:
     name: sr-implicit-downsampled

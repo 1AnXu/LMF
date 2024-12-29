@@ -1,1 +1,8 @@
-.idea/
+__pycache__
+folders
+load
+save
+*.log
+*.pth
+.vscode
+outputs

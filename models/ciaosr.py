@@ -37,6 +37,7 @@ class CiaoSR(nn.Module):
                  non_local_attn=True,
                  multi_scale=[2],
                  softmax_scale=1,
+                 **kwargs
                  ):
         super().__init__()
 
@@ -187,7 +188,7 @@ class CiaoSR(nn.Module):
                 key = F.grid_sample(feat_k, coord_.flip(-1).unsqueeze(1), mode='nearest',
                                     align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 576]
                 value = F.grid_sample(feat_v, coord_.flip(-1).unsqueeze(1), mode='nearest',
-                                      align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 576]
+                                      align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 640]
 
                 # Interpolate K to HR resolution
                 coord_k = F.grid_sample(feat_coord, coord_.flip(-1).unsqueeze(1),
@@ -204,7 +205,7 @@ class CiaoSR(nn.Module):
                 scale_[:, :, 0] *= feature.shape[-2]
                 scale_[:, :, 1] *= feature.shape[-1]
 
-                inp_v = torch.cat([value, inp, scale_], dim=-1)  # [16, 2304, 580]
+                inp_v = torch.cat([value, inp, scale_], dim=-1)  # [16, 2304, 644]
                 inp_k = torch.cat([key, inp, scale_], dim=-1)  # [16, 2304, 580]
 
                 inp_k = inp_k.contiguous().view(bs * q, -1)
