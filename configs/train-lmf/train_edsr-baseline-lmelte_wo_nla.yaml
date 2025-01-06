@@ -8,61 +8,57 @@ train_dataset:
   wrapper:
     name: sr-implicit-downsampled
     args:
-      inp_size: 64
+      inp_size: 48
       scale_max: 4
       augment: true
-      sample_q: 4096
-  batch_size: 16
+      sample_q: 2304
+  batch_size: 32
 
 val_dataset:
   dataset:
     name: image-folder
     args:
-      root_path: ./load/div2k/DIV2K_valid_HR
+      root_path: load/div2k/DIV2K_valid_HR
       first_k: 10
       repeat: 160
       cache: in_memory
   wrapper:
     name: sr-implicit-downsampled
     args:
-      inp_size: 64
+      inp_size: 48
       scale_max: 4
-      sample_q: 4096
-  batch_size: 16
+      sample_q: 2304
+  batch_size: 32
 
 data_norm:
   inp: {sub: [0.5], div: [0.5]}
   gt: {sub: [0.5], div: [0.5]}
 
 model:
-  name: ciaosr
+  name: lmelte
   args:
-    encoder:
+    encoder_spec:
       name: edsr-baseline
       args:
         no_upsampling: true
-    imnet_q:
-      name: mlp
+    imnet_spec:
+      name: lmmlp
       args:
         out_dim: 3
         hidden_dim: 16
-        hidden_depth: 8
-    imnet_k:
+        hidden_depth: 6
+        mod_scale: True
+        mod_shift: True
+    hypernet_spec:
       name: mlp
       args:
-        out_dim: 256
-        hidden_list: [ 256 ]
-    imnet_v:
-      name: mlp
-      args:
-        out_dim: 256
-        hidden_list: [ 256 ]
-    local_size: 2
-    feat_unfold: true
-    non_local_attn: true
-    multi_scale: [2]
-    softmax_scale: 1
+        out_dim: 216
+        hidden_list: [ 216 ]
+    hidden_dim: 128
+    local_ensemble: true
+    cell_decode: true
     mod_input: true
+    non_local_attn: False
 
 optimizer:
   name: adam
@@ -74,6 +70,6 @@ multi_step_lr:
   gamma: 0.5
 
 epoch_val: 1
-epoch_save: 50
+epoch_save: 20
 
-resume: ./save/epoch-last.pth
+resume: ~

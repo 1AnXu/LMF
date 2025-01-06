@@ -9,36 +9,45 @@ import numpy as np
 import models
 from models import register
 from utils import make_coord
+from models.arch_ciaosr.arch_csnln import CrossScaleAttention
 
-
-@register('lmlte')
-class LMLTE(nn.Module):
+@register('lmelte')
+class LMELTE(nn.Module):
 
     def __init__(self, encoder_spec, imnet_spec=None, hypernet_spec=None,
                  hidden_dim=128, local_ensemble=True, cell_decode=True,
-                 mod_input=False, cmsr_spec=None):
+                 mod_input=False, cmsr_spec=None,non_local_attn=False,multi_scale=[2]):
         super().__init__()
         self.local_ensemble = local_ensemble
         self.cell_decode = cell_decode
         self.max_scale = 4  # Max training scale
         self.mod_input = mod_input  # Set to True if use compressed latent code
-
         self.encoder = models.make(encoder_spec)
-        self.coef = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
-        self.freq = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
-        self.phase = nn.Linear(2, hidden_dim // 2, bias=False)
+        self.feat_dim = self.encoder.out_dim
 
+        self.non_local_attn = non_local_attn
+        self.multi_scale = multi_scale
+        if self.non_local_attn:
+            self.non_local_attn_dim = self.encoder.out_dim * len(multi_scale)
+            self.cs_attn = CrossScaleAttention(channel=self.encoder.out_dim, scale=multi_scale)
+            self.down_dim = nn.Conv2d(self.feat_dim+self.non_local_attn_dim,self.feat_dim, 3, padding=1)
+        self.coef = nn.Conv2d(self.feat_dim, hidden_dim, 3, padding=1)
+        self.freq = nn.Conv2d(self.feat_dim, hidden_dim//2, 3, padding=1)
+        self.coord_fc = nn.Linear(2, imnet_spec['args']['hidden_dim']//2, bias=False) #(b*q,2) -> (b*q,c/2)
+        self.phase = nn.Linear(2, hidden_dim // 2, bias=False)
+        
         # Use latent MLPs to generate modulations for the render MLP
         if hypernet_spec is not None:
             hypernet_in_dim = hidden_dim
             self.mod_dim = 0
-            self.mod_dim += imnet_spec['args']['hidden_dim'] if imnet_spec['args']['mod_scale'] else 0
-            self.mod_dim += imnet_spec['args']['hidden_dim'] if imnet_spec['args']['mod_shift'] else 0
+            self.mod_dim += imnet_spec['args']['hidden_dim'] if imnet_spec['args']['mod_scale'] else 0 # +16
+            self.mod_dim += imnet_spec['args']['hidden_dim'] if imnet_spec['args']['mod_shift'] else 0 # +16
             self.mod_dim *= imnet_spec['args']['hidden_depth']
 
-            hypernet_out_dim = self.mod_dim
+            hypernet_out_dim = self.mod_dim # 192
             if self.mod_input:
-                self.mod_coef_dim = self.mod_freq_dim = imnet_spec['args']['hidden_dim']
+                self.mod_coef_dim = imnet_spec['args']['hidden_dim']
+                self.mod_freq_dim = imnet_spec['args']['hidden_dim'] // 2 #一半
                 hypernet_out_dim += self.mod_coef_dim + self.mod_freq_dim
 
             self.hypernet = models.make(hypernet_spec, args={'in_dim': hypernet_in_dim, 'out_dim': hypernet_out_dim})
@@ -86,8 +95,8 @@ class LMLTE(nn.Module):
         :return: Coefficient (B, C, h, w) and Frequency (B, C, h, w)
         """
 
-        feat = self.encoder(inp)
-
+        feat = self.encoder(inp) # [16, 64, 48, 48]
+        self.feat = feat
         if inp_coord is not None:
             self.feat_coord = inp_coord.permute(0, 3, 1, 2)
         elif self.training or self.feat_coord is None or self.feat_coord.shape[-2] != feat.shape[-2] \
@@ -97,9 +106,36 @@ class LMLTE(nn.Module):
                 .unsqueeze(0).expand(feat.shape[0], 2, *feat.shape[-2:])
 
         # self.t1 = time.time()
+        # 增加非局部注意力
+        B, C, H, W = self.feat.shape
+        if self.non_local_attn:
+            crop_h, crop_w = 48, 48
+            if H * W > crop_h * crop_w:
+                # Fixme: generate cross attention by image patches
+                self.non_local_feat_v = torch.zeros(B, self.non_local_attn_dim, H, W).cuda()
+                for i in range(H // crop_h):
+                    for j in range(W // crop_w):
+                        i1, i2 = i * crop_h, ((i + 1) * crop_h if i < H // crop_h - 1 else H)
+                        j1, j2 = j * crop_w, ((j + 1) * crop_w if j < W // crop_w - 1 else W)
 
-        coef = self.coef(feat)
-        freq = self.freq(feat)
+                        padding = 3 // 2
+                        pad_i1, pad_i2 = (padding if i1 - padding >= 0 else 0), (
+                            padding if i2 + padding <= H else 0)
+                        pad_j1, pad_j2 = (padding if j1 - padding >= 0 else 0), (
+                            padding if j2 + padding <= W else 0)
+
+                        crop_feat = self.feat[:, :, i1 - pad_i1:i2 + pad_i2, j1 - pad_j1:j2 + pad_j2]
+                        crop_non_local_feat = self.cs_attn(crop_feat)
+                        self.non_local_feat_v[:, :, i1:i2, j1:j2] = crop_non_local_feat[:, :,
+                                                               pad_i1:crop_non_local_feat.shape[-2] - pad_i2,
+                                                               pad_j1:crop_non_local_feat.shape[-1] - pad_j2]
+            else:
+                self.non_local_feat_v = self.cs_attn(self.feat)  # [16, 64, 48, 48]
+            self.feat = torch.cat([self.feat, self.non_local_feat_v], dim=1)
+            self.feat = self.down_dim(self.feat)
+        
+        coef = self.coef(self.feat)
+        freq = self.freq(self.feat)
 
         self.coeff = coef
         self.freqq = freq
@@ -120,9 +156,9 @@ class LMLTE(nn.Module):
         coef = coef.permute(0, 2, 3, 1).contiguous().view(bs, -1, coef.shape[1])
         freq = freq.permute(0, 2, 3, 1).contiguous().view(bs, -1, freq.shape[1]) #(b,h*w,c)
 
-        freq = torch.stack(torch.split(freq, 2, dim=-1), dim=-1) # 【c/2 *(b,q,2)】->【(b,q,2,c/2)】
+        ##freq = torch.stack(torch.split(freq, 2, dim=-1), dim=-1) # 【c/2 *(b,q,2)】->【(b,q,2,c/2)】
         # freq = torch.mul(freq, rel_coord.unsqueeze(-1))
-        freq = torch.sum(freq, dim=-2) # (b,q,c/2)
+        ##freq = torch.sum(freq, dim=-2) # (b,q,c/2)
         if self.cell_decode:
             # Use relative height, width info
             rel_cell = cell.clone()[:, :h * w, :]
@@ -416,9 +452,10 @@ class LMLTE(nn.Module):
                     freq, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
                     .permute(0, 2, 1)
-                inp = torch.stack(torch.split(inp, 2, dim=-1), dim=-1)
-                inp = torch.mul(inp, rel_coord.unsqueeze(-1))
-                inp = torch.sum(inp, dim=-2)
+                # inp = torch.stack(torch.split(inp, 2, dim=-1), dim=-1)
+                # inp = torch.mul(inp, rel_coord.unsqueeze(-1))
+                # inp = torch.sum(inp, dim=-2)
+                inp *= self.coord_fc(rel_coord.view((bs * q, -1))).view(bs, q, -1)
                 if self.cell_decode:
                     rel_cell = cell.clone()
                     rel_cell[:, :, 0] *= h
@@ -561,9 +598,10 @@ class LMLTE(nn.Module):
             freq, coords.flip(-1).unsqueeze(1),
             mode='nearest', align_corners=False)[:, :, 0, :] \
             .permute(0, 2, 1)
-        inp = torch.stack(torch.split(inp, 2, dim=-1), dim=-1)
-        inp = torch.mul(inp, rel_coords.unsqueeze(-1))
-        inp = torch.sum(inp, dim=-2)
+        # inp = torch.stack(torch.split(inp, 2, dim=-1), dim=-1)
+        # inp = torch.mul(inp, rel_coords.unsqueeze(-1))
+        # inp = torch.sum(inp, dim=-2)
+        inp *= self.coord_fc(rel_coords.view(bs * (ls * le_q + nle_q), -1)).view(bs, ls * le_q + nle_q, -1)
         if self.cell_decode:
             if self.mod_input:
                 inp += self.imphase(rel_cells.view((bs * (ls * le_q + nle_q), -1))).view(bs, ls * le_q + nle_q, -1)

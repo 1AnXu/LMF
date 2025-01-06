@@ -221,15 +221,15 @@ class CiaoSR(nn.Module):
                 preds_k.append(pred_k)
 
             preds_k = torch.stack(preds_k, dim=-1)  # [16, 2304, 576, 4]
-            preds_v = torch.stack(preds_v, dim=-2)  # [16, 2304, 4, 576]
+            preds_v = torch.stack(preds_v, dim=-2)  # [16, 2304, 4, 640]
 
             attn = (query @ preds_k)  # [16, 2304, 1, 4]
-            x = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v)  # [16, 2304, 1, 576]
-            x = x.view(bs * q, -1)  # [16*2304, 576]
+            x = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v)  # [16, 2304, 1, 640]
+            x = x.view(bs * q, -1)  # [16*2304, 640]
 
             res_features.append(x)
 
-        result = torch.cat(res_features, dim=-1)  # [16, 2304, 576x2]
+        result = torch.cat(res_features, dim=-1)  # [16*2304, 640]
         result = self.imnet_q(result)  # [16, 2304, 3]
         result = result.view(bs, q, -1)
 

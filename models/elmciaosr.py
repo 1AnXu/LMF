@@ -11,17 +11,23 @@ from utils import make_coord
 from models.arch_ciaosr.arch_csnln import CrossScaleAttention
 
 
-@register('lmciaosr')
-class LMCiaoSR(nn.Module):
+@register('elmciaosr')
+class ELMCiaoSR(nn.Module):
     def __init__(self, encoder, prenet_q, hypernet_q,
                  imnet_q, imnet_k, imnet_v,
-                 local_size=2, feat_unfold=True, non_local_attn=True,
+                 local_size=2, feat_unfold=False, feat_enhance=True,enhance_factor=4,non_local_attn=True,
                  multi_scale=[2], softmax_scale=1, mod_input=False,
                  cmsr_spec=None):
         super().__init__()
 
         self.feat_unfold = feat_unfold
-        self.unfold_range = 3 if feat_unfold else 1
+        self.feat_enhance = feat_enhance
+        if feat_unfold:
+            self.unfold_range = 3
+        elif feat_enhance:
+            self.unfold_range = enhance_factor
+        else :
+            self.unfold_range = 1
         self.unfold_dim = self.unfold_range * self.unfold_range
         # self.eval_bsize = eval_bsize
         self.local_size = local_size
@@ -32,7 +38,8 @@ class LMCiaoSR(nn.Module):
         self.mod_input = mod_input  # Set to True if use compressed latent code
 
         self.encoder = models.make(encoder)
-
+        if self.feat_enhance:
+            self_enhancer = nn.Conv2d(self.encoder.out_dim, self.encoder.out_dim*self.unfold_range, 3, padding=1)
         if self.non_local_attn:
             self.non_local_attn_dim = self.encoder.out_dim * len(multi_scale)
             self.cs_attn = CrossScaleAttention(channel=self.encoder.out_dim, scale=multi_scale)
@@ -154,8 +161,11 @@ class LMCiaoSR(nn.Module):
             # 3x3 feature unfolding
             rich_feat = F.unfold(feat, self.unfold_range, padding=self.unfold_range // 2).view(
                 bs, in_c * self.unfold_dim, in_h, in_w)
+        elif self.feat_enhance:
+            rich_feat = self.encoder(feat)
         else:
             rich_feat = feat
+        
 
         return feat, rich_feat
 
@@ -372,9 +382,9 @@ class LMCiaoSR(nn.Module):
 
         # TODO: batched_query_latent() to avoid OOM
 
-        bs, c, h, w = feat.shape
+        bs, c, h, w = feat.shape # (bs, 256, 48, 48)
         base_c = 64
-        ur, er = self.unfold_range, 2
+        ur, er = self.unfold_range, 2 # 3,2
         feat_coord = self.feat_coord
 
         # Field radius (global: [-1, 1])
@@ -394,30 +404,30 @@ class LMCiaoSR(nn.Module):
             # Key and value
             t, l = round(vy / 2 + 0.5), round(vx / 2 + 0.5)
             key = value = feat.view(bs, ur, ur, base_c, h, w)[:, t:t + er, l:l + er, :, :, :].contiguous()
-            key = key.view(bs, er * er * base_c, h * w).permute(0, 2, 1) # (b, h * w, c*4)
+            key = key.view(bs, er * er * base_c, h * w).permute(0, 2, 1)
             value = value.view(bs, er * er * base_c, h, w)
             if self.non_local_attn:
                 value = torch.cat([value, self.non_local_feat], dim=1)
-                value = value.view(bs, er * er * base_c + base_c, h * w).permute(0, 2, 1) # (b, h * w, c*5)
+                value = value.view(bs, er * er * base_c + base_c, h * w).permute(0, 2, 1)
 
-            coord_q = feat_coord.view(bs, feat_coord.shape[1], h * w).permute(0, 2, 1)
+            bs, q = feat_coord.shape[:2] # q = h * w
+            coord_q = feat_coord.view(bs, feat_coord.shape[1], h * w).permute(0, 2, 1) #(b,h*w,q)
             coord_k = coord_q.clone()
             coord_k[:, :, 0] += vx * rx / feat.shape[-2]  # + eps_shift
             coord_k[:, :, 1] += vy * ry / feat.shape[-1]  # + eps_shift
 
-            bs, q = coord_q.shape[:2]
             Q, K = coord_q, coord_k
             rel = Q - K
-            rel[:, :, 0] *= feat.shape[-2]  # without mul
-            rel[:, :, 1] *= feat.shape[-1]
+            rel[:, :, 0] *= feat.shape[-2]  # without mul xh
+            rel[:, :, 1] *= feat.shape[-1]  # xw
             inp = rel
 
             scale_ = scale[:, :feat.shape[-2] * feat.shape[-1], :].clone()
             scale_[:, :, 0] *= feat.shape[-2]
             scale_[:, :, 1] *= feat.shape[-1]
 
-            weight_k = self.imnet_k(torch.cat([key, inp, scale_], dim=-1).view(bs * q, -1)).view(bs, q, -1)
-            weight_v = self.imnet_v(torch.cat([value, inp, scale_], dim=-1).view(bs * q, -1)).view(bs, q, -1)
+            weight_k = self.imnet_k(torch.cat([key, inp, scale_], dim=-1).view(bs * q, -1)).view(bs, q, -1).contiguous()
+            weight_v = self.imnet_v(torch.cat([value, inp, scale_], dim=-1).view(bs * q, -1)).view(bs, q, -1).contiguous()
 
             preds_k.append((key * weight_k).view(bs, q, -1))
             preds_v.append((value * weight_v).view(bs, q, -1))
@@ -429,9 +439,9 @@ class LMCiaoSR(nn.Module):
         query = self.prenet_q(query).view(bs, h * w, -1).unsqueeze(2)
 
         # Query modulations
-        attn = (query @ preds_k)
-        inp_q = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v)
-        mod = self.hypernet_q(inp_q.view(bs * q, -1)).view(bs, h, w, -1).permute(0, 3, 1, 2) #(b, c*5, h, w)
+        attn = (query @ preds_k) # (bs, h*w, 1, 4)
+        inp_q = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v) #()
+        mod = self.hypernet_q(inp_q.view(bs * q, -1)).view(bs, h, w, -1).permute(0, 3, 1, 2)
         if self.mod_input:
             self.inp_q = mod[:, self.mod_dim:, :, :]
         else:
@@ -455,7 +465,7 @@ class LMCiaoSR(nn.Module):
         local_size = self.local_size
         if local_size == 1:
             v_lst = [(0, 0)]
-        else:
+        else: # [(-1, -1), (-1, 1), (1, -1), (1, 1)]
             v_lst = [(i, j) for i in range(-1, 2, 4 - local_size) for j in range(-1, 2, 4 - local_size)]
 
         # field radius (global: [-1, 1])
@@ -474,7 +484,7 @@ class LMCiaoSR(nn.Module):
             coord_[:, :, 1] += vy * ry + eps_shift
             coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
 
-            q_coord = F.grid_sample(
+            q_coord = F.grid_sample( # 从feat_coord中取出对应的坐标
                 feat_coord, coord_.flip(-1).unsqueeze(1),
                 mode='nearest', align_corners=False)[:, :, 0, :] \
                 .permute(0, 2, 1)
