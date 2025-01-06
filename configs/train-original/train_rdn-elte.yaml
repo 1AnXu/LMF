@@ -35,7 +35,7 @@ data_norm:
   gt: {sub: [0.5], div: [0.5]}
 
 model:
-  name: lte
+  name: elte
   args:
     encoder_spec:
       name: rdn
@@ -58,6 +58,6 @@ multi_step_lr:
   gamma: 0.5
 
 epoch_val: 1
-epoch_save: 100
+epoch_save: 50
 
-resume: save/rdn-lte/epoch-last.pth
+resume: save/rdn-elte/epoch-last.pth
