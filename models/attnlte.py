@@ -10,10 +10,10 @@ import models
 from models import register
 from utils import make_coord
 from models.arch_ciaosr.arch_csnln import CrossScaleAttention
+import numpy as np
 
-
-@register('ciaosr')
-class CiaoSR(nn.Module):
+@register('attnlte')
+class ATTNLTE(nn.Module):
     """
     The subclasses should define `generator` with `encoder` and `imnet`,
         and overwrite the function `gen_feature`.
@@ -33,10 +33,11 @@ class CiaoSR(nn.Module):
                  imnet_k,
                  imnet_v,
                  local_size=2,
-                 feat_unfold=True,
+                 feat_unfold=False,
                  non_local_attn=True,
                  multi_scale=[2],
                  softmax_scale=1,
+                 hidden_dim=256,
                  **kwargs
                  ):
         super().__init__()
@@ -49,7 +50,13 @@ class CiaoSR(nn.Module):
 
         # imnet
         self.encoder = models.make(encoder, args={'no_upsampling': True})
-        imnet_dim = self.encoder.out_dim # self.encoder.embed_dim if hasattr(self.encoder, 'embed_dim') else self.encoder.out_dim
+        
+        self.coef = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
+        self.freq = nn.Conv2d(self.encoder.out_dim, hidden_dim, 3, padding=1)
+        self.phase = nn.Linear(2, hidden_dim//2, bias=False)       
+        
+        
+        imnet_dim = hidden_dim # self.encoder.embed_dim if hasattr(self.encoder, 'embed_dim') else self.encoder.out_dim
         if self.feat_unfold:
             imnet_q_in_dim = imnet_dim * 9
             imnet_k_in_dim = imnet_k_out_dim = imnet_dim * 9
@@ -121,8 +128,10 @@ class CiaoSR(nn.Module):
             else:
                 self.non_local_feat_v = self.cs_attn(feat)  # [16, 64, 48, 48]
 
-        self.feats = [feat]
-        return self.feats
+        self.coeff = self.coef(feat)
+        self.freqq = self.freq(feat)
+        self.feat = feat
+        return self.feat
 
     def query_rgb(self, coord, scale=None):
         """Query RGB value of GT.
@@ -136,101 +145,115 @@ class CiaoSR(nn.Module):
         Returns:
             result (Tensor): (part of) output.
         """
+        coef = self.coeff
+        freq = self.freqq
+        bs, h, w = coef.shape[0], coef.shape[-2], coef.shape[-1]
+        coef = coef.permute(0, 2, 3, 1).contiguous().view(bs, -1, coef.shape[1])
+        freq = freq.permute(0, 2, 3, 1).contiguous().view(bs, -1, freq.shape[1]) #(b,h*w,c)
 
-        res_features = []
-        for feature in self.feats:
-            B, C, H, W = feature.shape  # [16, 64, 48, 48]
+        freq = torch.stack(torch.split(freq, 2, dim=-1), dim=-1) # 【c/2 *(b,q,2)】->【(b,q,2,c/2)】
+        # freq = torch.mul(freq, rel_coord.unsqueeze(-1))
+        freq = torch.sum(freq, dim=-2) # (b,q,c/2)
+        if self.cell_decode:
+            # Use relative height, width info
+            rel_cell = scale.clone()[:, :h * w, :]
+            rel_cell[:, :, 0] *= h
+            rel_cell[:, :, 1] *= w
+            freq += self.phase(rel_cell.view((bs * h * w, -1))).view(bs, h * w, -1)
+        freq = torch.cat((torch.cos(np.pi * freq), torch.sin(np.pi * freq)), dim=-1)
 
-            if self.feat_unfold:
-                feat_q = F.unfold(feature, 3, padding=1).view(B, C * 9, H, W)  # [16, 576, 48, 48]
-                feat_k = F.unfold(feature, 3, padding=1).view(B, C * 9, H, W)  # [16, 576, 48, 48]
-                if self.non_local_attn:
-                    feat_v = F.unfold(feature, 3, padding=1).view(B, C * 9, H, W)  # [16, 576, 48, 48]
-                    feat_v = torch.cat([feat_v, self.non_local_feat_v], dim=1)  # [16, 576+64, 48, 48]
-                else:
-                    feat_v = F.unfold(feature, 3, padding=1).view(B, C * 9, H, W)  # [16, 576, 48, 48]
-            else:
-                feat_q = feat_k = feat_v = feature
+        feature = torch.mul(coef, freq).contiguous().view(bs * h * w, -1)  # [16*2304, 640]
+        
+        B, C, H, W = feature.shape  # [16, 64, 48, 48]
+        # query
+        query = F.grid_sample(feature, coord.flip(-1).unsqueeze(1), mode='nearest',
+                                align_corners=False).permute(0, 3, 2, 1).contiguous()  # [16, 2304, 1, 576]
 
-            # query
-            query = F.grid_sample(feat_q, coord.flip(-1).unsqueeze(1), mode='nearest',
-                                  align_corners=False).permute(0, 3, 2, 1).contiguous()  # [16, 2304, 1, 576]
+        feat_coord = make_coord(feature.shape[-2:], flatten=False).permute(2, 0, 1) \
+            .unsqueeze(0).expand(B, 2, *feature.shape[-2:])  # [16, 2, 48, 48]
+        feat_coord = feat_coord.to(coord)
+        feat_coord = self.feat_coord
 
-            feat_coord = make_coord(feature.shape[-2:], flatten=False).permute(2, 0, 1) \
-               .unsqueeze(0).expand(B, 2, *feature.shape[-2:])  # [16, 2, 48, 48]
-            feat_coord = feat_coord.to(coord)
-            feat_coord = self.feat_coord
+        if self.local_size == 1:
+            v_lst = [(0, 0)]
+        else:
+            v_lst = [(i, j) for i in range(-1, 2, 4 - self.local_size) for j in range(-1, 2, 4 - self.local_size)]
+        eps_shift = 1e-6
+        preds_k, preds_v = [], []
 
-            if self.local_size == 1:
-                v_lst = [(0, 0)]
-            else:
-                v_lst = [(i, j) for i in range(-1, 2, 4 - self.local_size) for j in range(-1, 2, 4 - self.local_size)]
-            eps_shift = 1e-6
-            preds_k, preds_v = [], []
+        for v in v_lst:
+            vx, vy = v[0], v[1]
+            # project to LR field
+            tx = ((H - 1) / (1 - scale[:, 0, 0])).view(B, 1)  # [16, 1]
+            ty = ((W - 1) / (1 - scale[:, 0, 1])).view(B, 1)  # [16, 1]
+            rx = (2 * abs(vx) - 1) / tx if vx != 0 else 0  # [16, 1]
+            ry = (2 * abs(vy) - 1) / ty if vy != 0 else 0  # [16, 1]
 
-            for v in v_lst:
-                vx, vy = v[0], v[1]
-                # project to LR field
-                tx = ((H - 1) / (1 - scale[:, 0, 0])).view(B, 1)  # [16, 1]
-                ty = ((W - 1) / (1 - scale[:, 0, 1])).view(B, 1)  # [16, 1]
-                rx = (2 * abs(vx) - 1) / tx if vx != 0 else 0  # [16, 1]
-                ry = (2 * abs(vy) - 1) / ty if vy != 0 else 0  # [16, 1]
+            bs, q = coord.shape[:2]
+            coord_ = coord.clone()  # [16, 2304, 2]
+            if vx != 0:
+                coord_[:, :, 0] += vx / abs(vx) * rx + eps_shift  # [16, 2304]
+            if vy != 0:
+                coord_[:, :, 1] += vy / abs(vy) * ry + eps_shift  # [16, 2304]
+            coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
 
-                bs, q = coord.shape[:2]
-                coord_ = coord.clone()  # [16, 2304, 2]
-                if vx != 0:
-                    coord_[:, :, 0] += vx / abs(vx) * rx + eps_shift  # [16, 2304]
-                if vy != 0:
-                    coord_[:, :, 1] += vy / abs(vy) * ry + eps_shift  # [16, 2304]
-                coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
+            q_coef = F.grid_sample(
+                coef, coord_.flip(-1).unsqueeze(1),
+                mode='nearest', align_corners=False)[:, :, 0, :] \
+                .permute(0, 2, 1)
+            q_freq = F.grid_sample(
+                freq, coord_.flip(-1).unsqueeze(1),
+                mode='nearest', align_corners=False)[:, :, 0, :] \
+                .permute(0, 2, 1)
+            q_coord = F.grid_sample(
+                feat_coord, coord_.flip(-1).unsqueeze(1),
+                mode='nearest', align_corners=False)[:, :, 0, :] \
+                .permute(0, 2, 1)
+            rel_coord = coord - q_coord
+            rel_coord[:, :, 0] *= feature.shape[-2]
+            rel_coord[:, :, 1] *= feature.shape[-1]
+            
+            # prepare cell
+            rel_cell = scale.clone()
+            rel_cell[:, :, 0] *= feature.shape[-2]
+            rel_cell[:, :, 1] *= feature.shape[-1]
+            # basis generation
+            bs, q = coord.shape[:2]
+            q_freq = torch.stack(torch.split(q_freq, 2, dim=-1), dim=-1)#(b,q,c/2,2)
+            q_freq = torch.mul(q_freq, rel_coord.unsqueeze(-1))#(b,q,c/2,2) mul (b,q,2,1) -> (b,q,2,c/2)
+            q_freq = torch.sum(q_freq, dim=-2)# (b,q,c/2)
+            q_freq += self.phase(rel_cell.view((bs * q, -1))).view(bs, q, -1)
+            q_freq = torch.cat((torch.cos(np.pi*q_freq), torch.sin(np.pi*q_freq)), dim=-1) # (b,q,c)
 
-                # key and value
-                key = F.grid_sample(feat_k, coord_.flip(-1).unsqueeze(1), mode='nearest',
-                                    align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 576]
-                value = F.grid_sample(feat_v, coord_.flip(-1).unsqueeze(1), mode='nearest',
-                                      align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 640]
+            inp = torch.mul(q_coef, q_freq).contiguous().view(bs * q, -1)
+            
+            feat_k = feat_v = inp
+            # key and value
+            key = F.grid_sample(feat_k, coord_.flip(-1).unsqueeze(1), mode='nearest',
+                                align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 576]
+            value = F.grid_sample(feat_v, coord_.flip(-1).unsqueeze(1), mode='nearest',
+                                    align_corners=False)[:, :, 0, :].permute(0, 2, 1).contiguous()  # [16, 2304, 640]
 
-                # Interpolate K to HR resolution
-                coord_k = F.grid_sample(feat_coord, coord_.flip(-1).unsqueeze(1),
-                                        mode='nearest', align_corners=False)[:, :, 0, :].permute(0, 2,
-                                                                                                 1)  # [16, 2304, 2]
+            inp_k = torch.cat([key,rel_coord, rel_cell], dim=-1).contiguous().view(bs * q, -1)  # [16, 2304, 580]
+            inp_v = torch.cat([value,rel_coord, rel_cell], dim=-1).contiguous().view(bs * q, -1)  # [16, 2304, 644]
 
-                Q, K = coord, coord_k  # [16, 2304, 2]
-                rel = Q - K  # [16, 2304, 2]
-                rel[:, :, 0] *= feature.shape[-2]  # without mul
-                rel[:, :, 1] *= feature.shape[-1]
-                inp = rel  # [16, 2304, 2]
+            weight_k = self.imnet_k(inp_k).view(bs, q, -1).contiguous()  # [16, 2304, 576]
+            pred_k = (key * weight_k).view(bs, q, -1)  # [16, 2304, 576]
 
-                scale_ = scale.clone()  # [16, 2304, 2]
-                scale_[:, :, 0] *= feature.shape[-2]
-                scale_[:, :, 1] *= feature.shape[-1]
+            weight_v = self.imnet_v(inp_v).view(bs, q, -1).contiguous()  # [16, 2304, 576]
+            pred_v = (value * weight_v).view(bs, q, -1)  # [16, 2304, 576]
 
-                inp_v = torch.cat([value, inp, scale_], dim=-1)  # [16, 2304, 644]
-                inp_k = torch.cat([key, inp, scale_], dim=-1)  # [16, 2304, 580]
+            preds_v.append(pred_v)
+            preds_k.append(pred_k)
 
-                inp_k = inp_k.contiguous().view(bs * q, -1)
-                inp_v = inp_v.contiguous().view(bs * q, -1)
+        preds_k = torch.stack(preds_k, dim=-1)  # [16, 2304, 576, 4]
+        preds_v = torch.stack(preds_v, dim=-2)  # [16, 2304, 4, 640]
 
-                weight_k = self.imnet_k(inp_k).view(bs, q, -1).contiguous()  # [16, 2304, 576]
-                pred_k = (key * weight_k).view(bs, q, -1)  # [16, 2304, 576]
+        attn = (query @ preds_k)  # [16, 2304, 1, 4]
+        x = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v)  # [16, 2304, 1, 640]
+        x = x.view(bs * q, -1)  # [16*2304, 640]
 
-                weight_v = self.imnet_v(inp_v).view(bs, q, -1).contiguous()  # [16, 2304, 576]
-                pred_v = (value * weight_v).view(bs, q, -1)  # [16, 2304, 576]
-
-                preds_v.append(pred_v)
-                preds_k.append(pred_k)
-
-            preds_k = torch.stack(preds_k, dim=-1)  # [16, 2304, 576, 4]
-            preds_v = torch.stack(preds_v, dim=-2)  # [16, 2304, 4, 640]
-
-            attn = (query @ preds_k)  # [16, 2304, 1, 4]
-            x = ((attn / self.softmax_scale).softmax(dim=-1) @ preds_v)  # [16, 2304, 1, 640]
-            x = x.view(bs * q, -1)  # [16*2304, 640]
-
-            res_features.append(x)
-
-        result = torch.cat(res_features, dim=-1)  # [16*2304, 640]
-        result = self.imnet_q(result)  # [16, 2304, 3]
+        result = self.imnet_q(x)  # [16, 2304, 3]
         result = result.view(bs, q, -1)
 
         result += F.grid_sample(self.inp, coord.flip(-1).unsqueeze(1), mode='bilinear',

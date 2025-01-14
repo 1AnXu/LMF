@@ -8,15 +8,23 @@ import yaml
 
 # edsr-baseline 1.220M
 config_pths = [
-                 "configs/train-original/train_edsr-baseline-slte.yaml",
-            #    "configs/train-lmf/train_edsr-baseline-lmelte.yaml", # 187.9K   concact 306.8K
-            #    "configs/train-lmf/train_edsr-baseline-lmelte_wo_nla.yaml", # 187.8K
-            #    "configs/train-original/train_edsr-baseline-elte_saa_wo_nla.yaml" #420.7K
-            #    "configs/train-original/train_edsr-baseline-elte_saa_wo_nla_w_ae.yaml",
-            #    "configs/train-original/train_edsr-baseline-lte.yaml", 494.3 K
-            #    "configs/train-lmf/train_edsr-baseline-lmlte.yaml", 251.9 K
-            #    "configs/train-original/train_edsr-baseline-elte.yaml", 420.7 K
-            #    "configs/train-original/train_edsr-baseline-elte_saa.yaml",
+    "configs/train-lmf/train_edsr-baseline-lmelte_192h.yaml",# 270.2K
+    # "configs/train-lmf/train_edsr-baseline-lmelte_160h.yaml",#160->265.1K
+    # "configs/train-lmf/train_edsr-baseline-lmelte_128h.yaml",# 128->228.4K
+    # "configs/train-lmf/train_edsr-baseline-lmelte.yaml",# 256->326.4K  192->257.1K
+    # "configs/train-original/train_edsr-baseline-ciaosr.yaml" #1429.1 K
+    # "configs/train-lmf/train_edsr-baseline-lmnlalte.yaml", # 297.1K
+    # "configs/train-original/train_edsr-baseline-elte_saa_w_nla.yaml", # 466K
+    # "configs/train-lmf/train_edsr-baseline-lmciaosr.yaml", # 735.4K
+    # "configs/train-original/train_edsr-baseline-slte.yaml",
+    # "configs/train-lmf/train_edsr-baseline-lmelte.yaml", # 187.9K   concact 306.8K
+    # "configs/train-lmf/train_edsr-baseline-lmelte_wo_nla.yaml", # 187.8K
+    # "configs/train-original/train_edsr-baseline-elte_saa_wo_nla.yaml" #420.7K
+    # "configs/train-original/train_edsr-baseline-elte_saa_wo_nla_w_ae.yaml",
+    # "configs/train-original/train_edsr-baseline-lte.yaml", # 494.3 K +mlp_attn = 510.6K
+    # "configs/train-lmf/train_edsr-baseline-lmlte.yaml", 251.9 K
+    # "configs/train-original/train_edsr-baseline-elte.yaml", 420.7 K
+    # "configs/train-original/train_edsr-baseline-elte_saa.yaml",
                ]
 # 提取模型名称并构建字典
 config_map = {}

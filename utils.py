@@ -11,6 +11,89 @@ import numpy as np
 from torch.optim import SGD, Adam
 from tensorboardX import SummaryWriter
 
+import cv2
+import matplotlib.pyplot as plt
+from torchvision import transforms
+from torchvision.transforms import InterpolationMode
+import random
+import math
+def show_feature_map(feature_map,layer,name='rgb',rgb=False):
+    feature_map = feature_map.squeeze(0)
+    #if rgb: feature_map = feature_map.permute(1,2,0)*0.5+0.5
+    feature_map = feature_map.cpu().numpy()
+    feature_map_num = feature_map.shape[0]
+    row_num = math.ceil(np.sqrt(feature_map_num))
+    if rgb:
+        #plt.figure()
+        #plt.imshow(feature_map)
+        #plt.axis('off')
+        feature_map = cv2.cvtColor(feature_map,cv2.COLOR_BGR2RGB)
+        cv2.imwrite('data/'+layer+'/'+name+".png",feature_map*255)
+        #plt.show()
+    else:
+        plt.figure()
+        for index in range(1, feature_map_num+1):
+            t = (feature_map[index-1]*255).astype(np.uint8)
+            t = cv2.applyColorMap(t, cv2.COLORMAP_TWILIGHT)
+            plt.subplot(row_num, row_num, index)
+            plt.imshow(t, cmap='gray')
+            plt.axis('off')
+            #ensure_path('data/'+layer)
+            cv2.imwrite('data/'+layer+'/'+str(name)+'_'+str(index)+".png",t)
+        #plt.show()
+        plt.savefig('data/'+layer+'/'+str(name)+".png")
+
+def resize_fn(img, size):
+    return transforms.ToTensor()(
+        transforms.Resize(size, InterpolationMode.BICUBIC)(
+            transforms.ToPILImage()(img)))
+
+def downsample(img, scale_min=1, scale_max=4, inp_size=None, augment=False, epoch=None):
+    if epoch<20: s = random.randint(scale_min, scale_max)
+    s = random.uniform(scale_min, scale_max)
+    #print(s)
+    
+    if inp_size is None:
+        h_lr = math.floor(img.shape[-2] / s + 1e-9)
+        w_lr = math.floor(img.shape[-1] / s + 1e-9)
+        h_hr = round(h_lr * s)
+        w_hr = round(w_lr * s)
+        img = img[:, :, :h_hr, :w_hr]
+        img_down = torch.stack([resize_fn(x, (h_lr, w_lr)) for x in img], dim=0) 
+        crop_lr, crop_hr = img_down, img
+    else:
+        h_lr = inp_size
+        w_lr = inp_size
+        h_hr = round(h_lr * s)
+        w_hr = round(w_lr * s)
+        x0 = random.randint(0, img.shape[-2] - w_hr)
+        y0 = random.randint(0, img.shape[-1] - w_hr)
+        crop_hr = img[:, :, x0: x0 + w_hr, y0: y0 + w_hr]
+        crop_lr = torch.stack([resize_fn(x, w_lr) for x in crop_hr], dim=0)
+    
+    if augment == True:
+        hflip = random.random() < 0.5
+        vflip = random.random() < 0.5
+        dflip = random.random() < 0.5
+
+        def augment(x):
+            if hflip: x = x.flip(-2)
+            if vflip: x = x.flip(-1)
+            if dflip: x = x.transpose(-2, -1)
+            return x
+        crop_lr = augment(crop_lr)
+        crop_hr = augment(crop_hr)
+
+    coord = make_coord([h_hr, w_hr], flatten=False)
+    coord = coord.unsqueeze(0).expand(img.shape[0], *coord.shape[:2], 2)
+
+    cell = torch.tensor([2 / crop_hr.shape[-2], 2 / crop_hr.shape[-1]], dtype=torch.float32).unsqueeze(0).expand(img.shape[0], 2)
+    return {
+        'inp': crop_lr.contiguous(),
+        'coord': coord.contiguous(),
+        'cell': cell.contiguous(),
+        'gt': crop_hr.contiguous()
+    } 
 
 class Averager():
 

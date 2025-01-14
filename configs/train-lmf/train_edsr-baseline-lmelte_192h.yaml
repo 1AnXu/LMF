@@ -12,7 +12,7 @@ train_dataset:
       scale_max: 4
       augment: true
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 val_dataset:
   dataset:
@@ -28,7 +28,7 @@ val_dataset:
       inp_size: 48
       scale_max: 4
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 data_norm:
   inp: {sub: [0.5], div: [0.5]}
@@ -52,9 +52,9 @@ model:
     hypernet_spec:
       name: mlp
       args:
-        out_dim: 216
-        hidden_list: [ 216 ]
-    hidden_dim: 128
+        out_dim: 248
+        hidden_list: [ 248 ]
+    hidden_dim: 192
     local_ensemble: true
     cell_decode: true
     mod_input: true
@@ -70,6 +70,6 @@ multi_step_lr:
   gamma: 0.5
 
 epoch_val: 1
-epoch_save: 20
+epoch_save: 50
 
-resume: ~
+resume: save/edsr-b-lmelte_192h/epoch-last.pth

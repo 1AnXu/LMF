@@ -47,9 +47,9 @@ class ELTE(nn.Module):
         return self.feat
 
     def query_rgb(self, coord, cell=None):
-        feat = self.feat
-        coef = self.coeff
-        freq = self.freqq
+        feat = self.feat # (16, 64, 48, 48)
+        coef = self.coeff# (16, 64, 48, 48)
+        freq = self.freqq# (16, 128, 48, 48)
 
         vx_lst = [-1, 1]
         vy_lst = [-1, 1]
@@ -59,25 +59,25 @@ class ELTE(nn.Module):
         rx = 2 / feat.shape[-2] / 2
         ry = 2 / feat.shape[-1] / 2
 
-        feat_coord = self.feat_coord
+        feat_coord = self.feat_coord # (16, 2, 48, 48)
 
         preds = []
         areas = []
         for vx in vx_lst:
             for vy in vy_lst:
                 # prepare coefficient & frequency
-                coord_ = coord.clone()
+                coord_ = coord.clone() # (16, 2304, 2)
                 coord_[:, :, 0] += vx * rx + eps_shift
                 coord_[:, :, 1] += vy * ry + eps_shift
                 coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
                 q_coef = F.grid_sample(
                     coef, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
-                    .permute(0, 2, 1)
+                    .permute(0, 2, 1) # (16, 2304, 256)
                 q_freq = F.grid_sample(
                     freq, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
-                    .permute(0, 2, 1)
+                    .permute(0, 2, 1) #(16, 2304, 128)
                 q_coord = F.grid_sample(
                     feat_coord, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
@@ -101,12 +101,12 @@ class ELTE(nn.Module):
                 q_freq += self.phase(rel_cell.view((bs * q, -1))).view(bs, q, -1)
                 q_freq = torch.cat((torch.cos(np.pi*q_freq), torch.sin(np.pi*q_freq)), dim=-1) # (b,q,c)
 
-                inp = torch.mul(q_coef, q_freq)
+                inp = torch.mul(q_coef, q_freq) # (16, 2304, 256) * (16, 2304, 256) = (16, 2304, 256)
 
                 pred = self.imnet(inp.contiguous().view(bs * q, -1)).view(bs, q, -1)
                 preds.append(pred)
 
-                area = torch.abs(rel_coord[:, :, 0] * rel_coord[:, :, 1])
+                area = torch.abs(rel_coord[:, :, 0] * rel_coord[:, :, 1]) # (16, 2304,1)
                 areas.append(area + 1e-9)
 
         tot_area = torch.stack(areas).sum(dim=0)

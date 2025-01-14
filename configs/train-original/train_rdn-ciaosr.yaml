@@ -12,7 +12,7 @@ train_dataset:
       scale_max: 4
       augment: true
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 val_dataset:
   dataset:
@@ -28,7 +28,7 @@ val_dataset:
       inp_size: 48
       scale_max: 4
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 data_norm:
   inp: {sub: [0.5], div: [0.5]}
@@ -38,7 +38,7 @@ model:
   name: ciaosr
   args:
     encoder:
-      name: edsr-baseline
+      name: rdn
       args:
         no_upsampling: true
     imnet_q:
@@ -73,4 +73,4 @@ multi_step_lr:
 epoch_val: 1
 epoch_save: 50
 
-resume: save/edsr-b_ciaosr/epoch-last.pth
+resume: ./save/epoch-last.pth

@@ -11,17 +11,23 @@ from utils import make_coord
 from models.arch_ciaosr.arch_csnln import CrossScaleAttention
 
 
-@register('lmciaosr')
-class LMCiaoSR(nn.Module):
+@register('slmciaosr')
+class SLMCiaoSR(nn.Module):
     def __init__(self, encoder, prenet_q, hypernet_q,
                  imnet_q, imnet_k, imnet_v,
-                 local_size=2, feat_unfold=True, non_local_attn=True,
+                 local_size=2, feat_unfold=False, non_local_attn=True,
                  multi_scale=[2], softmax_scale=1, mod_input=False,
-                 cmsr_spec=None,feat_shift=False):
+                 cmsr_spec=None,feat_shift=False,shift_size=1,**kwargs):
         super().__init__()
 
         self.feat_unfold = feat_unfold
-        self.unfold_range = 3 if feat_unfold else 1
+        self.feat_shift = feat_shift
+        self.shift_size = shift_size
+        self.unfold_range = 1
+        if feat_shift:
+            self.unfold_range = 2
+        elif feat_unfold:
+            self.unfold_range = 3
         self.unfold_dim = self.unfold_range * self.unfold_range
         # self.eval_bsize = eval_bsize
         self.local_size = local_size
@@ -37,10 +43,12 @@ class LMCiaoSR(nn.Module):
             self.non_local_attn_dim = self.encoder.out_dim * len(multi_scale)
             self.cs_attn = CrossScaleAttention(channel=self.encoder.out_dim, scale=multi_scale)
 
+        self.feat_dim = self.encoder.out_dim
+        if self.feat_shift:
+            self.dim_squeeze = torch.nn.Conv2d(in_channels=self.feat_dim*5, out_channels=self.feat_dim*4, kernel_size=1)
         # k&v imnet
-        imnet_dim = self.encoder.out_dim
-        if self.feat_unfold:
-            imnet_dim *= 2 * 2  # self.unfold_dim
+        if self.feat_unfold or self.feat_shift:
+            imnet_dim = self.feat_dim * 2 * 2  # self.unfold_dim
         imnet_k_in_dim = imnet_v_in_dim = imnet_dim
         imnet_k_out_dim = imnet_v_out_dim = imnet_dim
         # coord + cell decoding
@@ -154,6 +162,14 @@ class LMCiaoSR(nn.Module):
             # 3x3 feature unfolding
             rich_feat = F.unfold(feat, self.unfold_range, padding=self.unfold_range // 2).view(
                 bs, in_c * self.unfold_dim, in_h, in_w)
+        elif self.feat_shift:
+            padded_feature_map = F.pad(feat, pad=(1, 1, 1, 1), mode='replicate')
+            shifted_left = torch.roll(padded_feature_map, shifts=-self.shift_size, dims=3)[:,:,1:-1,1:-1]
+            shifted_right = torch.roll(padded_feature_map, shifts=self.shift_size, dims=3)[:,:,1:-1,1:-1]
+            shifted_up = torch.roll(padded_feature_map, shifts=-self.shift_size, dims=2)[:,:,1:-1,1:-1]
+            shifted_down = torch.roll(padded_feature_map, shifts=self.shift_size, dims=2)[:,:,1:-1,1:-1]
+            rich_feat = torch.cat([feat, shifted_left, shifted_right, shifted_up, shifted_down], dim=1)
+            rich_feat = self.dim_squeeze(rich_feat)
         else:
             rich_feat = feat
 
@@ -374,7 +390,6 @@ class LMCiaoSR(nn.Module):
 
         bs, c, h, w = feat.shape
         base_c = 64
-        ur, er = self.unfold_range, 2
         feat_coord = self.feat_coord
 
         # Field radius (global: [-1, 1])
@@ -388,17 +403,19 @@ class LMCiaoSR(nn.Module):
             v_lst = [(i, j) for i in range(-1, 2, 4 - self.local_size) for j in range(-1, 2, 4 - self.local_size)]
 
         preds_k, preds_v = [], []
+
+        # Key and value
+        key = value = feat.clone()
+        key = key.view(bs, 4 * base_c, h * w).permute(0, 2, 1) # (b, h * w, c*4)
+        value = value.view(bs, 4 * base_c, h, w)
+        if self.non_local_attn:
+            value = torch.cat([value, self.non_local_feat], dim=1)
+            value = value.view(bs, 4 * base_c + base_c, h * w).permute(0, 2, 1) # (b, h * w, c*5)
+        else:
+            value = value.view(bs, 4 * base_c, h * w).permute(0, 2, 1) # (b, h * w, c*4)
+
         for v in v_lst:
             vx, vy = v[0], v[1]
-
-            # Key and value
-            t, l = round(vy / 2 + 0.5), round(vx / 2 + 0.5)
-            key = value = feat.view(bs, ur, ur, base_c, h, w)[:, t:t + er, l:l + er, :, :, :].contiguous()
-            key = key.view(bs, er * er * base_c, h * w).permute(0, 2, 1) # (b, h * w, c*4)
-            value = value.view(bs, er * er * base_c, h, w)
-            if self.non_local_attn:
-                value = torch.cat([value, self.non_local_feat], dim=1)
-                value = value.view(bs, er * er * base_c + base_c, h * w).permute(0, 2, 1) # (b, h * w, c*5)
 
             coord_q = feat_coord.view(bs, feat_coord.shape[1], h * w).permute(0, 2, 1)
             coord_k = coord_q.clone()

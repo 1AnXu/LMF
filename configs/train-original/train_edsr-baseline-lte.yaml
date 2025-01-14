@@ -37,6 +37,7 @@ data_norm:
 model:
   name: lte
   args:
+    mlp_attn: False
     encoder_spec:
       name: edsr-baseline
       args:

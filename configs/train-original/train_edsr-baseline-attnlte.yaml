@@ -35,7 +35,7 @@ data_norm:
   gt: {sub: [0.5], div: [0.5]}
 
 model:
-  name: ciaosr
+  name: attnlte
   args:
     encoder:
       name: edsr-baseline
@@ -45,17 +45,17 @@ model:
       name: mlp
       args:
         out_dim: 3
-        hidden_list: [256,256,256,256]
+        hidden_list: [256,256,256]
     imnet_k:
       name: mlp
       args:
-        hidden_list: [256,256,256,256]
+        hidden_list: [256,256]
     imnet_v:
       name: mlp
       args:
-        hidden_list: [256,256,256,256]
+        hidden_list: [256,256]
     local_size: 2
-    feat_unfold: true
+    feat_unfold: false
     non_local_attn: true
     multi_scale: [2]
     softmax_scale: 1
@@ -73,4 +73,4 @@ multi_step_lr:
 epoch_val: 1
 epoch_save: 50
 
-resume: save/edsr-b_ciaosr/epoch-last.pth
+resume: ~

@@ -12,7 +12,7 @@ train_dataset:
       scale_max: 4
       augment: true
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 val_dataset:
   dataset:
@@ -28,49 +28,38 @@ val_dataset:
       inp_size: 48
       scale_max: 4
       sample_q: 2304
-  batch_size: 32
+  batch_size: 16
 
 data_norm:
   inp: {sub: [0.5], div: [0.5]}
   gt: {sub: [0.5], div: [0.5]}
 
 model:
-  name: ciaosr
+  name: alte
   args:
-    encoder:
+    num_heads: 8
+    mlp_attn: False
+    encoder_spec:
       name: edsr-baseline
       args:
         no_upsampling: true
-    imnet_q:
+    imnet_spec:
       name: mlp
       args:
         out_dim: 3
-        hidden_list: [256,256,256,256]
-    imnet_k:
-      name: mlp
-      args:
-        hidden_list: [256,256,256,256]
-    imnet_v:
-      name: mlp
-      args:
-        hidden_list: [256,256,256,256]
-    local_size: 2
-    feat_unfold: true
-    non_local_attn: true
-    multi_scale: [2]
-    softmax_scale: 1
-    mod_input: true
+        hidden_list: [256, 256, 256]
+    hidden_dim: 256
 
 optimizer:
   name: adam
   args:
     lr: 1.e-4
-epoch_max: 1200
+epoch_max: 1000
 multi_step_lr:
-  milestones: [200, 400, 600, 800, 1000]
+  milestones: [200, 400, 600, 800]
   gamma: 0.5
 
 epoch_val: 1
-epoch_save: 50
+epoch_save: 100
 
-resume: save/edsr-b_ciaosr/epoch-last.pth
+resume: ./save/_train_edsr-baseline-lte/epoch-last.pth

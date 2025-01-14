@@ -79,15 +79,15 @@ class LIIF(nn.Module):
         areas = []
         for vx in vx_lst:
             for vy in vy_lst:
-                coord_ = coord.clone()
+                coord_ = coord.clone() # HR_coords x_i
                 coord_[:, :, 0] += vx * rx + eps_shift
                 coord_[:, :, 1] += vy * ry + eps_shift
-                coord_.clamp_(-1 + 1e-6, 1 - 1e-6)
-                q_feat = F.grid_sample(
+                coord_.clamp_(-1 + 1e-6, 1 - 1e-6) # HR_coords x_i_move
+                q_feat = F.grid_sample( # the nestest latent feature z*_{-1,-1} for x_i_move
                     feat, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
                     .permute(0, 2, 1)
-                q_coord = F.grid_sample(
+                q_coord = F.grid_sample( # LR_coords z_{-1},{-1}
                     feat_coord, coord_.flip(-1).unsqueeze(1),
                     mode='nearest', align_corners=False)[:, :, 0, :] \
                     .permute(0, 2, 1)
