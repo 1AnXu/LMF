@@ -11,12 +11,12 @@ from models import register
 from utils import make_coord
 from models.arch_ciaosr.arch_csnln import CrossScaleAttention
 
-@register('lmnla-elte')
+@register('lmnlaelte')
 class LMNLAELTE(nn.Module):
 
     def __init__(self, encoder_spec, imnet_spec=None, hypernet_spec=None,
                  hidden_dim=128, local_ensemble=True, cell_decode=True,
-                 mod_input=False, cmsr_spec=None,non_local_attn=False,multi_scale=[2]):
+                 mod_input=False, cmsr_spec=None,non_local_attn=True,multi_scale=[2]):
         super().__init__()
         self.local_ensemble = local_ensemble
         self.cell_decode = cell_decode
@@ -30,8 +30,8 @@ class LMNLAELTE(nn.Module):
         if self.non_local_attn:
             self.non_local_attn_dim = self.encoder.out_dim * len(multi_scale)
             self.cs_attn = CrossScaleAttention(channel=self.encoder.out_dim, scale=multi_scale)
-            # self.down_dim = nn.Conv2d(self.feat_dim+self.non_local_attn_dim,self.feat_dim, 3, padding=1)
-            self.feat_dim += self.non_local_attn_dim
+            self.down_dim = nn.Conv2d(self.feat_dim+self.non_local_attn_dim,self.feat_dim, 1)
+            # self.feat_dim += self.non_local_attn_dim
         self.coef = nn.Conv2d(self.feat_dim, hidden_dim, 3, padding=1)
         self.freq = nn.Conv2d(self.feat_dim, hidden_dim//2, 3, padding=1)
         self.coord_fc = nn.Linear(2, imnet_spec['args']['hidden_dim']//2, bias=False) #(b*q,2) -> (b*q,c/2)
@@ -133,7 +133,7 @@ class LMNLAELTE(nn.Module):
             else:
                 self.non_local_feat_v = self.cs_attn(self.feat)  # [16, 64, 48, 48]
             self.feat = torch.cat([self.feat, self.non_local_feat_v], dim=1)
-            # self.feat = self.down_dim(self.feat)
+            self.feat = self.down_dim(self.feat)
         
         coef = self.coef(self.feat)
         freq = self.freq(self.feat)
