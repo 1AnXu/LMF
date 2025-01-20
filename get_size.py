@@ -8,7 +8,15 @@ import yaml
 
 # edsr-baseline 1.220M
 config_pths = [
+<<<<<<< HEAD
     "configs/train-lmf/train_edsr-baseline-lmnlaelte_128h_6d.yaml", # 241.3K
+=======
+    "configs/train-lmf/train_edsr-baseline-lmelte_128h.yaml"
+    # "configs/train-lmf/train_edsr-baseline-lmllte_96h.yaml",# 225K
+    # "configs/train-lmf/train_edsr-baseline-lmllte_128h.yaml",# 271K
+    # "configs/train-lmf/train_edsr-baseline-lmlte.yaml",# 271K
+    # "configs/train-lmf/train_edsr-baseline-lmelte_128h_10d.yaml", #277K
+>>>>>>> e5a77b5 (新增lmllte,合并sin和cos)
     # "configs/train-lmf/train_edsr-baseline-lmnlaelte_128h.yaml", # 384.3K(concat) 281.9K(1x1conv)
     # "configs/train-lmf/train_rdn-lmelte_128h.yaml",
     # "configs/train-lmf/train_rdn-lmnlaelte_128h.yaml"

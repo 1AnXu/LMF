@@ -35,7 +35,7 @@ data_norm:
   gt: {sub: [0.5], div: [0.5]}
 
 model:
-  name: lmlte
+  name: lmllte
   args:
     encoder_spec:
       name: edsr-baseline
@@ -58,6 +58,7 @@ model:
     local_ensemble: true
     cell_decode: true
     mod_input: true
+    non_local_attn: False
 
 optimizer:
   name: adam
@@ -69,6 +70,6 @@ multi_step_lr:
   gamma: 0.5
 
 epoch_val: 1
-epoch_save: 20
+epoch_save: 50
 
-resume: ~
+resume: save/edsr-b-lmelte_128h_10d/epoch-last.pth
