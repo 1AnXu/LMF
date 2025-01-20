@@ -38,7 +38,7 @@ model:
   name: lmnlaelte
   args:
     encoder_spec:
-      name: edsr-baseline
+      name: rdn
       args:
         no_upsampling: true
     imnet_spec:
@@ -46,14 +46,14 @@ model:
       args:
         out_dim: 3
         hidden_dim: 16
-        hidden_depth: 8
+        hidden_depth: 6
         mod_scale: True
         mod_shift: True
     hypernet_spec:
       name: mlp
       args:
-        out_dim: 280
-        hidden_list: [ 280 ]
+        out_dim: 216
+        hidden_list: [ 216 ]
     hidden_dim: 128
     local_ensemble: true
     cell_decode: true
@@ -72,4 +72,4 @@ multi_step_lr:
 epoch_val: 1
 epoch_save: 50
 
-resume: save/edsr-b-lmnlaelte_128h/epoch-1000.pth
+resume: save/rdn-lmnlaelte_128h_6d/epoch-last.pth

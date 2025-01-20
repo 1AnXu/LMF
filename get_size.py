@@ -8,9 +8,10 @@ import yaml
 
 # edsr-baseline 1.220M
 config_pths = [
+    "configs/train-lmf/train_edsr-baseline-lmnlaelte_128h_6d.yaml", # 241.3K
     # "configs/train-lmf/train_edsr-baseline-lmnlaelte_128h.yaml", # 384.3K(concat) 281.9K(1x1conv)
-    "configs/train-lmf/train_rdn-lmelte_128h.yaml",
-    "configs/train-lmf/train_rdn-lmnlaelte_128h.yaml"
+    # "configs/train-lmf/train_rdn-lmelte_128h.yaml",
+    # "configs/train-lmf/train_rdn-lmnlaelte_128h.yaml"
     # "configs/train-lmf/train_edsr-baseline-lmelte_192h.yaml",# 270.2K
     # "configs/train-lmf/train_edsr-baseline-lmelte_160h.yaml",#160->265.1K
     # "configs/train-lmf/train_edsr-baseline-lmelte_128h.yaml",# 128->228.4K
